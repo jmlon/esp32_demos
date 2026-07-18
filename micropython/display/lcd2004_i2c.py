@@ -6,7 +6,7 @@ from i2c_lcd import I2cLcd
 SDA_PIN = Pin(21)
 SCL_PIN = Pin(22)
 
-# Common default I2C addresses for LCD1602 modules are 0x27 or 0x3F
+# Common default I2C addresses for LCD2004 modules are 0x27 or 0x3F
 I2C_ADDR = 0x27
 TOTAL_ROWS = 4
 TOTAL_COLS = 20
