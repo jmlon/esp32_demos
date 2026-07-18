@@ -1,3 +1,8 @@
+"""Minimal LED blink demo for ESP32 -- toggles the on-board LED once per second.
+
+Pick the LED_OUTPUT value matching your board (see the commented options below).
+"""
+
 import machine
 import time
 

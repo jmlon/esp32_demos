@@ -1,9 +1,18 @@
+"""Connect an ESP32 to Wi-Fi (station mode) and make a simple HTTP GET request.
+
+Target: ESP32 running MicroPython (requires the `urequests` module).
+Demonstrates: forcing AP mode off, connecting as a station with a timeout, and
+fetching a URL.
+"""
+
 import network
 import time
 import urequests
 
-ap_ssid = "Mikrotik"
-ap_password = "tayfunulu"
+# TODO: replace with your own network credentials.
+# Do not commit real passwords to a public repo.
+ap_ssid = "YOUR_WIFI_SSID"
+ap_password = "YOUR_WIFI_PASSWORD"
 
 # Make sure AP mode is off (it persists across soft resets)
 ap = network.WLAN(network.WLAN.IF_AP)
@@ -38,6 +47,7 @@ while not nic.isconnected() and timeout > 0:
         print("body bytes:", len(r.content))
         print(r.text[:200])
         r.close()
+        break  # request done -- stop the wait loop
 
     else:
         print("Failed:", nic.status())
