@@ -1,3 +1,19 @@
+// ST7920 128x64 graphic LCD demo: three rotating screens (dashboard mockup,
+// shapes/fonts, animated waveform) over hardware SPI.
+//
+// Board: ESP32C3 Dev Module
+// USB CDC On Boot: Enabled
+// Upload Mode: UART0/Hardware CDC
+// USB Mode: Hardware CDC and JTAG
+//
+// Wiring (ESP32-C3, hardware SPI): SCK -> GPIO6, MOSI -> GPIO7, CS -> GPIO5,
+// RESET -> GPIO4. PSB must be tied to GND to select the LCD's serial mode
+// (parallel mode is not supported by this constructor). No MISO connection
+// is needed; the display is write-only.
+//
+// Required libraries:
+//   - U8g2
+
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <SPI.h>
