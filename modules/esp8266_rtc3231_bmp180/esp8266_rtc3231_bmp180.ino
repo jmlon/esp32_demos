@@ -1,6 +1,6 @@
 // DS3231 real-time clock (date/time + temperature) + BMP180 (temperature/pressure/altitude) over I2C
 //
-// Board: Generic ESP8266 Module
+// Board: Generic ESP8266 Module (ESP8266EX)
 //
 // Wiring (ESP8266): SDA -> GPIO4/D2, SCL -> GPIO5/D1, both sensors on the same bus.
 //
