@@ -1,0 +1,46 @@
+[
+  {
+    "label": "ESP32: Compile Code",
+    "command": "arduino-cli compile -b esp32:esp32:esp32da .",
+    "cwd": "$ZED_DIRNAME",
+    "description": "Compiles the ESP32 sketch in the active file's directory",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "ESP8266: Compile rtc3231_bmp180",
+    "command": "arduino-cli compile -b esp8266:esp8266:generic modules/esp8266_rtc3231_bmp180",
+    "description": "Compiles the ESP8266 rtc3231/BMP180 sketch",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "ESP32: Upload Code",
+    "command": "arduino-cli upload -p /dev/ttyUSB0 -b esp32:esp32:esp32da .",
+    "cwd": "$ZED_DIRNAME",
+    "description": "Uploads the compiled binary from the active file's directory",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "ESP8266: Upload rtc3231_bmp180",
+    "command": "arduino-cli upload -p /dev/ttyUSB0 -b esp8266:esp8266:generic modules/esp8266_rtc3231_bmp180",
+    "description": "Uploads the ESP8266 rtc3231/BMP180 sketch",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "Serial Monitor: /dev/ttyUSB0",
+    "command": "arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200",
+    "description": "Opens a serial monitor on /dev/ttyUSB0",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "Serial Monitor: /dev/ttyACM0",
+    "command": "arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200",
+    "description": "Opens a serial monitor on /dev/ttyACM0",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false
+  }
+]
