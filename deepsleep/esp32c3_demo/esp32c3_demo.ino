@@ -1,4 +1,5 @@
 // Demo of deep sleep mode on an ESP32-C3.
+// Not yet flashed/verified on hardware -- see caveat below before relying on it.
 //
 // Board: ESP32C3 Dev Module
 // USB CDC On Boot: Enabled
@@ -6,7 +7,15 @@
 // USB Mode: Hardware CDC and JTAG
 //
 // The ESP32-C3 wakes from deep sleep using its timer. The wakeup count is
-// retained in RTC memory, so it survives deep-sleep resets.
+// retained in RTC memory (RTC_DATA_ATTR), which is this chip's equivalent of
+// the ESP8266 demo's rtcUserMemoryRead/Write -- both survive deep-sleep
+// resets but not a power cycle.
+//
+// Caveat: the DevKitM-1 exposes only native USB-CDC serial (no UART bridge
+// chip like the ESP8266 board), so after each deep-sleep wake the port has
+// to re-enumerate with the host before the serial monitor reconnects. A
+// short fixed delay after Serial.begin() can be too brief and drop the
+// first print lines, so we wait (bounded) for the host instead.
 
 #include <Arduino.h>
 #include "esp_sleep.h"
@@ -18,6 +27,10 @@ RTC_DATA_ATTR uint32_t wakeupCount = 0;
 
 void setup() {
   Serial.begin(115200);
+  unsigned long serialWaitStart = millis();
+  while (!Serial && millis() - serialWaitStart < 3000) {
+    delay(10);
+  }
   delay(100);
 
   pinMode(LED_PIN, OUTPUT);
