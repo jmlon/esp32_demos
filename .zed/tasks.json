@@ -1,7 +1,7 @@
 [
   {
     "label": "ESP32-C3: Compile Code",
-    "command": "arduino-cli compile -b esp32:esp32:esp32c3 .",
+    "command": "arduino-cli compile -b esp32:esp32:esp32c3 --build-path ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Compiles the ESP32 sketch in the active file's directory",
     "use_new_terminal": false,
@@ -9,7 +9,7 @@
   },
   {
     "label": "ESP32-C3: Upload Code",
-    "command": "arduino-cli upload -p /dev/ttyACM0 -b esp32:esp32:esp32c3 .",
+    "command": "arduino-cli upload -p /dev/ttyACM0 -b esp32:esp32:esp32c3 --input-dir ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Uploads the compiled binary from the active file's directory",
     "use_new_terminal": false,
@@ -17,7 +17,7 @@
   },
   {
     "label": "ESP8266: Compile",
-    "command": "arduino-cli compile -b esp8266:esp8266:generic .",
+    "command": "arduino-cli compile -b esp8266:esp8266:generic --build-path ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Compiles the ESP8266 rtc3231/BMP180 sketch",
     "use_new_terminal": false,
@@ -25,7 +25,7 @@
   },
   {
     "label": "ESP8266: Upload",
-    "command": "arduino-cli upload -p /dev/ttyUSB0 -b esp8266:esp8266:generic .",
+    "command": "arduino-cli upload -p /dev/ttyUSB0 -b esp8266:esp8266:generic --input-dir ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Uploads the ESP8266 rtc3231/BMP180 sketch",
     "use_new_terminal": false,
