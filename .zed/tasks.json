@@ -3,13 +3,29 @@
     "label": "ESP32-C3: Compile Code",
     "command": "arduino-cli compile -b esp32:esp32:esp32c3:CDCOnBoot=cdc --build-path ./build .",
     "cwd": "$ZED_DIRNAME",
+    "description": "Compiles the ESP32-C3 sketch in the active file's directory",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "ESP32: Compile Code",
+    "command": "arduino-cli compile -b esp32:esp32:esp32 --build-path ./build .",
+    "cwd": "$ZED_DIRNAME",
     "description": "Compiles the ESP32 sketch in the active file's directory",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
   },
   {
-    "label": "ESP32-C3: Upload Code",
+    "label": "ESP32-C3: Upload Code (ttyACM0)",
     "command": "arduino-cli upload -p /dev/ttyACM0 -b esp32:esp32:esp32c3 --input-dir ./build .",
+    "cwd": "$ZED_DIRNAME",
+    "description": "Uploads the compiled binary from the active file's directory",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "ESP32: Upload Code (ttyUSB0)",
+    "command": "arduino-cli upload -p /dev/ttyUSB0 -b esp32:esp32:esp32 --input-dir ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Uploads the compiled binary from the active file's directory",
     "use_new_terminal": false,

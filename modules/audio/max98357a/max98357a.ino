@@ -2,16 +2,25 @@
 // and a 440 Hz tone on the right channel, using two amplifier boards (one per
 // channel) driven from the same I2S bus.
 //
-// Board: ESP32C3 Dev Module
-// USB CDC On Boot: Enabled
-// Upload Mode: UART0/Hardware CDC
-// USB Mode: Hardware CDC and JTAG
+// The target is picked at compile time from the board selected in the IDE
+// (CONFIG_IDF_TARGET_*); only the I2S pins differ.
 //
-// With USB CDC On Boot disabled, Serial goes to UART0 and nothing shows on
-// /dev/ttyACM0. With arduino-cli use: -b esp32:esp32:esp32c3:CDCOnBoot=cdc
+// ESP32-C3
+//   Board: ESP32C3 Dev Module
+//   USB CDC On Boot: Enabled
+//   Upload Mode: UART0/Hardware CDC
+//   USB Mode: Hardware CDC and JTAG
+//   With USB CDC On Boot disabled, Serial goes to UART0 and nothing shows on
+//   /dev/ttyACM0. With arduino-cli use: -b esp32:esp32:esp32c3:CDCOnBoot=cdc
+//   Wiring: BCLK -> GPIO3, LRC -> GPIO1, DIN -> GPIO10
 //
-// Wiring (ESP32-C3 -> both MAX98357A boards):
-//   BCLK -> GPIO3, LRC -> GPIO1, DIN -> GPIO10, VIN -> 5V, GND -> GND
+// ESP32 (ESP32-D0WD-V3, e.g. an ESP-WROOM-32 DevKit)
+//   Board: ESP32 Dev Module
+//   Serial on /dev/ttyUSB0. With arduino-cli use: -b esp32:esp32:esp32
+//   Wiring: BCLK -> GPIO26, LRC -> GPIO25, DIN -> GPIO22
+//
+// Wiring common to both (-> both MAX98357A boards):
+//   VIN -> 5V, GND -> GND
 //   SD (left board)  -> 100k to 5V  (SD > 1.4 V selects left only)
 //   SD (right board) -> 680k to 5V  (SD ~1.0 V selects right only)
 // The SD voltage divides against the chip's internal ~100k pull-down and the
@@ -23,6 +32,18 @@
 
 #include "ESP_I2S.h"
 #include <math.h>
+
+#if CONFIG_IDF_TARGET_ESP32C3
+const int I2S_BCLK = 3;
+const int I2S_LRC = 1;
+const int I2S_DIN = 10;
+#elif CONFIG_IDF_TARGET_ESP32
+const int I2S_BCLK = 26;
+const int I2S_LRC = 25;
+const int I2S_DIN = 22;
+#else
+#error "This sketch supports the ESP32-C3 and the ESP32; select one of them as the board."
+#endif
 
 I2SClass i2s;
 
@@ -57,11 +78,12 @@ void setup() {
     sineTable[i] = (int16_t)(AMPLITUDE * sinf(2.0f * M_PI * i / SINE_TABLE_SIZE));
   }
 
-  // setPins(bclk, ws, dout, din, mclk): BCLK=3, LRC=1, DOUT=10, DIN=-1 (none), MCLK=-1 (none)
-  i2s.setPins(3, 1, 10, -1, -1);
+  // setPins(bclk, ws, dout, din, mclk): the amplifier's DIN is the ESP32's
+  // data out; no data in (-1) and no MCLK (-1)
+  i2s.setPins(I2S_BCLK, I2S_LRC, I2S_DIN, -1, -1);
 
   // Launch standard 44.1kHz stereo audio playback structure
-  if (!i2s.begin(I2S_MODE_STD, 44100, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
+  if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
     Serial.println("System Error: Failed to configure clean stereo I2S!");
     while (1);
   }

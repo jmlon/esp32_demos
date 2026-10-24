@@ -1,25 +1,35 @@
-// MIDI song player for the ESP32-C3 and the MAX98357A, synthesized with LEAF
-// (https://github.com/spiricom/LEAF): 2-operator FM voices plus a few simple
-// drums.  A port of stm32_blackpill/audio/midi, scaled down for the C3.
+// MIDI song player for the ESP32-C3 or the ESP32 and the MAX98357A,
+// synthesized with LEAF (https://github.com/spiricom/LEAF): 2-operator FM
+// voices plus a few simple drums.  A port of stm32_blackpill/audio/midi.
 //
-// The ESP32-C3 has no FPU, and LEAF computes in single-precision float, so
+// The target is picked at compile time from the board selected in the IDE
+// (CONFIG_IDF_TARGET_*); the "Target" section below holds the settings that
+// differ: pins, sample rate, voices and the brightest drum filters.
+//
+// ESP32-C3: it has no FPU, and LEAF computes in single-precision float, so
 // every addition and multiplication is a software-emulated libgcc call
 // (measured at 160 MHz: about 110 cycles per addition, 140 per
 // multiplication).  The Black Pill plays 8 FM voices at 32 kHz; the C3 plays
 // 4 at 12 kHz, with the envelopes at a control rate (see CONTROL_FRAMES).
 // An FM voice then costs about 2100 cycles per sample, a drum 900 to 3100,
-// out of 13300.  The sample song averages up to 88 % of the CPU.  The load
-// report shows how much is left; raise MELODIC_VOICES only while the average
-// load stays well below 100 %.  Notes beyond MELODIC_VOICES steal the oldest
-// one.  Building with -O2 measured no faster than the core's default -Os.
+// out of 13300.  The sample song averages up to 88 % of the CPU.  Building
+// with -O2 measured no faster than the core's default -Os.
+//
+// ESP32: it has a single-precision FPU and runs at 240 MHz, so it plays the
+// Black Pill's 8 voices at 32 kHz, with the Black Pill's drums.  The sample
+// song averages at most 23 % of the CPU, its slowest block 38 %.
+//
+// The load report shows how much is left; raise MELODIC_VOICES only while
+// the average load stays well below 100 %.  Notes beyond MELODIC_VOICES
+// steal the oldest one.
 //
 // The song is not parsed on the board.  stm32_blackpill/tools/midi2h.py turns
 // a Standard MIDI File into song.h, a flat list of timed note events; to play
 // another song, regenerate it:
 //   python3 tools/midi2h.py path/to/song.mid -o <this folder>/song.h
-// then rebuild.  The song plays once; press BOOT (GPIO9) to play it again.
-// The title, then the CPU load, voice use and clipping, are printed on the
-// USB serial port (/dev/ttyACM0).
+// then rebuild.  The song plays once; press BOOT to play it again.  The
+// title, then the CPU load, voice use and clipping, are printed on the USB
+// serial port (/dev/ttyACM0 on the C3, /dev/ttyUSB0 on the ESP32).
 //
 // Instruments: each MIDI channel's General MIDI program picks one of a dozen
 // 2-operator FM patches (piano, mallets, bells, organ, plucked, bass,
@@ -27,16 +37,25 @@
 // Channel 10 plays drums: kicks, snares, clap, hi-hats, toms and cymbals,
 // each built from LEAF noise, sine, filter and envelope objects.
 //
-// Board: ESP32C3 Dev Module
-// USB CDC On Boot: Enabled
-// Upload Mode: UART0/Hardware CDC
-// USB Mode: Hardware CDC and JTAG
-// With arduino-cli use: -b esp32:esp32:esp32c3:CDCOnBoot=cdc
+// ESP32-C3
+//   Board: ESP32C3 Dev Module
+//   USB CDC On Boot: Enabled
+//   Upload Mode: UART0/Hardware CDC
+//   USB Mode: Hardware CDC and JTAG
+//   With arduino-cli use: -b esp32:esp32:esp32c3:CDCOnBoot=cdc
+//   Wiring, the same as modules/audio/max98357a (ESP32-C3 -> MAX98357A):
+//     BCLK -> GPIO3, LRC -> GPIO1, DIN -> GPIO10, VIN -> 5V, GND -> GND
+//   BOOT button: GPIO9
 //
-// Wiring, the same as modules/max98357a (ESP32-C3 -> MAX98357A):
-//   BCLK -> GPIO3, LRC -> GPIO1, DIN -> GPIO10, VIN -> 5V, GND -> GND
+// ESP32 (ESP32-D0WD-V3, e.g. an ESP-WROOM-32 DevKit)
+//   Board: ESP32 Dev Module
+//   With arduino-cli use: -b esp32:esp32:esp32
+//   Wiring (ESP32 -> MAX98357A):
+//     BCLK -> GPIO26, LRC -> GPIO25, DIN -> GPIO22, VIN -> 5V, GND -> GND
+//   BOOT button: GPIO0
+//
 // Every sample goes to both slots, so one board with SD open, or the left
-// and right boards of modules/max98357a, all play the whole song.
+// and right boards of modules/audio/max98357a, all play the whole song.
 //
 // Required libraries:
 //   - ESP_I2S (bundled with the ESP32 Arduino core 3.x)
@@ -52,14 +71,40 @@
 namespace {
 
 // ---------------------------------------------------------------------------
-// I2S output
+// Target
 
+#if CONFIG_IDF_TARGET_ESP32C3
 constexpr int8_t I2S_BCLK = 3;
 constexpr int8_t I2S_LRC = 1;
 constexpr int8_t I2S_DIN = 10;
 constexpr uint8_t KEY_PIN = 9;  // BOOT button, LOW while pressed
-
 constexpr uint32_t SAMPLE_RATE = 12000;
+constexpr uint8_t MELODIC_VOICES = 4;
+// Nothing above 6 kHz at 12 kHz: the hi-hat and cymbal filters sit 2.5 to
+// 3 kHz lower than on the Black Pill.  The kick has no noise click: at 5 %
+// level it cost as much as the rest of the kick.
+constexpr float KICK_NOISE = 0;
+constexpr float HAT_HZ = 4000;
+constexpr float CRASH_HZ = 2500;
+constexpr float RIDE_HZ = 3500;
+#elif CONFIG_IDF_TARGET_ESP32
+constexpr int8_t I2S_BCLK = 26;
+constexpr int8_t I2S_LRC = 25;
+constexpr int8_t I2S_DIN = 22;
+constexpr uint8_t KEY_PIN = 0;  // BOOT button, LOW while pressed
+constexpr uint32_t SAMPLE_RATE = 32000;
+constexpr uint8_t MELODIC_VOICES = 8;
+constexpr float KICK_NOISE = 0.05f;
+constexpr float HAT_HZ = 7000;
+constexpr float CRASH_HZ = 5000;
+constexpr float RIDE_HZ = 6000;
+#else
+#error "This sketch supports the ESP32-C3 and the ESP32; select one of them as the board."
+#endif
+
+// ---------------------------------------------------------------------------
+// I2S output
+
 static_assert(SAMPLE_RATE % 1000 == 0, "song times are whole milliseconds");
 constexpr uint32_t SAMPLES_PER_MS = SAMPLE_RATE / 1000;
 
@@ -192,8 +237,8 @@ const FmPatch *patchForProgram(uint8_t program) {
 // Envelopes run at a control rate, once every CONTROL_FRAMES samples, and
 // each sample steps linearly towards the next control value.  On the C3 a
 // tADSRS_tick costs about 700 cycles, a fifth of an FM voice; an addition
-// per sample costs about 110.  A 0.67 ms control period still resolves the
-// fastest attacks of the patches (1 ms).
+// per sample costs about 110.  The control period (0.67 ms on the C3, 0.25
+// ms on the ESP32) still resolves the fastest attacks of the patches (1 ms).
 constexpr uint32_t CONTROL_FRAMES = 8;
 static_assert(BLOCK_FRAMES % CONTROL_FRAMES == 0, "blocks hold whole control periods");
 constexpr float CONTROL_RATE = static_cast<float>(SAMPLE_RATE) / CONTROL_FRAMES;
@@ -318,7 +363,6 @@ struct Voice {
 
 // The sample song needs up to 7 at once; with fewer voices its densest
 // chords steal notes, which the end-of-song report counts.
-constexpr uint8_t MELODIC_VOICES = 4;
 Voice voices[MELODIC_VOICES];
 uint32_t stolenVoices = 0;
 
@@ -359,11 +403,8 @@ Voice &allocateVoice(uint8_t channel, uint8_t note) {
 // noise through a band-pass or high-pass filter (snares, clap, hi-hats,
 // cymbals), under an exponential decay.  Drums ignore note-offs.  Each kind
 // has its own voice, so a hit cuts the previous one of the same kind; the
-// open hi-hat is cut by the closed one, as on a real kit.
-//
-// At 12 kHz there is nothing above 6 kHz, so the hi-hat and cymbal filters
-// sit 2.5 to 3 kHz lower than on the Black Pill.  The kick has no noise
-// click: at 5 % level it cost as much as the rest of the kick.
+// open hi-hat is cut by the closed one, as on a real kit.  KICK_NOISE and
+// the *_HZ filters depend on the target (see the top of the file).
 
 enum class NoiseFilter : uint8_t { BandPass, HighPass };
 
@@ -380,14 +421,14 @@ struct DrumSound {
 };
 
 //                              tone   drop  dropMs tone  noise  filter                  Hz     Q      decay
-constexpr DrumSound KICK       = {48,   120,  40,    1.0f, 0,     NoiseFilter::HighPass,  3000, 0.7f,  350};
+constexpr DrumSound KICK       = {48,   120,  40,    1.0f, KICK_NOISE, NoiseFilter::HighPass, 3000, 0.7f, 350};
 constexpr DrumSound SIDE_STICK = {420,  0,    1,     0.4f, 0.5f,  NoiseFilter::BandPass,  2500, 1.0f,  40};
 constexpr DrumSound SNARE      = {185,  40,   20,    0.35f, 0.9f, NoiseFilter::BandPass,  3000, 0.6f,  180};
 constexpr DrumSound CLAP       = {0,    0,    1,     0,    1.0f,  NoiseFilter::BandPass,  1200, 1.5f,  150};
-constexpr DrumSound CLOSED_HAT = {0,    0,    1,     0,    0.8f,  NoiseFilter::HighPass,  4000, 0.7f,  45};
-constexpr DrumSound OPEN_HAT   = {0,    0,    1,     0,    0.8f,  NoiseFilter::HighPass,  4000, 0.7f,  350};
-constexpr DrumSound CRASH      = {0,    0,    1,     0,    0.7f,  NoiseFilter::HighPass,  2500, 0.7f,  1200};
-constexpr DrumSound RIDE       = {0,    0,    1,     0,    0.5f,  NoiseFilter::HighPass,  3500, 1.0f,  800};
+constexpr DrumSound CLOSED_HAT = {0,    0,    1,     0,    0.8f,  NoiseFilter::HighPass,  HAT_HZ, 0.7f, 45};
+constexpr DrumSound OPEN_HAT   = {0,    0,    1,     0,    0.8f,  NoiseFilter::HighPass,  HAT_HZ, 0.7f, 350};
+constexpr DrumSound CRASH      = {0,    0,    1,     0,    0.7f,  NoiseFilter::HighPass,  CRASH_HZ, 0.7f, 1200};
+constexpr DrumSound RIDE       = {0,    0,    1,     0,    0.5f,  NoiseFilter::HighPass,  RIDE_HZ, 1.0f, 800};
 
 struct DrumVoice {
   tCycle tone;
@@ -428,7 +469,7 @@ struct DrumVoice {
 
   bool silent() const { return envelopeDone(amp); }
 
-  // Once per control period; the pitch drop moves in 0.67 ms steps.
+  // Once per control period; the pitch drop moves in control-period steps.
   void control() {
     ampStep = (tADSRS_tick(amp) - ampLevel) * CONTROL_STEP;
     if (sound->toneLevel != 0) {
@@ -638,9 +679,11 @@ void report() {
   }
   if (songFinished) {
     songFinished = false;
-    Serial.print("Song finished, ");
+    Serial.print("Song finished, !!!");
     Serial.print(stolenVoices);
-    Serial.println(" notes stolen; press BOOT (GPIO9) to play it again.");
+    Serial.print(" notes stolen; press BOOT (GPIO");
+    Serial.print(KEY_PIN);
+    Serial.println(") to play it again.");
   }
 
   const uint32_t nowMs = millis();
