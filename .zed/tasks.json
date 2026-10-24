@@ -1,7 +1,7 @@
 [
   {
     "label": "ESP32-C3: Compile Code",
-    "command": "arduino-cli compile -b esp32:esp32:esp32c3 --build-path ./build .",
+    "command": "arduino-cli compile -b esp32:esp32:esp32c3:CDCOnBoot=cdc --build-path ./build .",
     "cwd": "$ZED_DIRNAME",
     "description": "Compiles the ESP32 sketch in the active file's directory",
     "use_new_terminal": false,
