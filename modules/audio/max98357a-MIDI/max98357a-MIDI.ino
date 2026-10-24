@@ -15,9 +15,13 @@
 // out of 13300.  The sample song averages up to 88 % of the CPU.  Building
 // with -O2 measured no faster than the core's default -Os.
 //
-// ESP32: it has a single-precision FPU and runs at 240 MHz, so it plays the
-// Black Pill's 8 voices at 32 kHz, with the Black Pill's drums.  The sample
-// song averages at most 23 % of the CPU, its slowest block 38 %.
+// ESP32: it has a single-precision FPU and runs at 240 MHz, so it plays 16
+// voices at 48 kHz, with the Black Pill's drums and a reverb.  The higher rate than the
+// Black Pill's 32 kHz keeps more of the FM sidebands below Nyquist (less
+// aliasing on bright patches such as the e-piano tine).  48 kHz rather than
+// 44.1 kHz because song times are whole milliseconds.  The sample song
+// averages up to 62 % of the CPU, its slowest block 98 %; the reverb alone
+// takes 23 %.
 //
 // The load report shows how much is left; raise MELODIC_VOICES only while
 // the average load stays well below 100 %.  Notes beyond MELODIC_VOICES
@@ -80,6 +84,7 @@ constexpr int8_t I2S_DIN = 10;
 constexpr uint8_t KEY_PIN = 9;  // BOOT button, LOW while pressed
 constexpr uint32_t SAMPLE_RATE = 12000;
 constexpr uint8_t MELODIC_VOICES = 4;
+constexpr size_t LEAF_POOL_BYTES = 8192;
 // Nothing above 6 kHz at 12 kHz: the hi-hat and cymbal filters sit 2.5 to
 // 3 kHz lower than on the Black Pill.  The kick has no noise click: at 5 %
 // level it cost as much as the rest of the kick.
@@ -87,17 +92,24 @@ constexpr float KICK_NOISE = 0;
 constexpr float HAT_HZ = 4000;
 constexpr float CRASH_HZ = 2500;
 constexpr float RIDE_HZ = 3500;
+// A one-pole output high-pass (6 dB/octave, 3 operations per sample) and no
+// reverb: the C3 has no time left for a biquad or tNReverb.
+#define OUTPUT_HIGHPASS_BIQUAD 0
+#define HAS_REVERB 0
 #elif CONFIG_IDF_TARGET_ESP32
 constexpr int8_t I2S_BCLK = 26;
 constexpr int8_t I2S_LRC = 25;
 constexpr int8_t I2S_DIN = 22;
 constexpr uint8_t KEY_PIN = 0;  // BOOT button, LOW while pressed
-constexpr uint32_t SAMPLE_RATE = 32000;
-constexpr uint8_t MELODIC_VOICES = 8;
+constexpr uint32_t SAMPLE_RATE = 48000;
+constexpr uint8_t MELODIC_VOICES = 16;
+constexpr size_t LEAF_POOL_BYTES = 12288;  // about 380 bytes per voice
 constexpr float KICK_NOISE = 0.05f;
 constexpr float HAT_HZ = 7000;
 constexpr float CRASH_HZ = 5000;
 constexpr float RIDE_HZ = 6000;
+#define OUTPUT_HIGHPASS_BIQUAD 1  // 12 dB/octave
+#define HAS_REVERB 1
 #else
 #error "This sketch supports the ESP32-C3 and the ESP32; select one of them as the board."
 #endif
@@ -109,9 +121,9 @@ static_assert(SAMPLE_RATE % 1000 == 0, "song times are whole milliseconds");
 constexpr uint32_t SAMPLES_PER_MS = SAMPLE_RATE / 1000;
 
 // loop() renders one block and hands it to i2s.write(), which blocks until
-// the driver's DMA ring (6 x 240 frames, 120 ms) has room for it.  Song
-// events are applied once per block, so their timing is accurate to a block
-// (5 ms).
+// the driver's DMA ring (6 x 240 frames: 120 ms on the C3, 30 ms on the
+// ESP32) has room for it.  Song events are applied once per block, so their
+// timing is accurate to a block (5 ms on the C3, 1.3 ms on the ESP32).
 constexpr uint32_t BLOCK_FRAMES = 64;
 
 I2SClass i2s;
@@ -124,7 +136,7 @@ LEAF leaf;
 
 // Every LEAF object lives in this pool, allocated at init (LEAF avoids
 // malloc).  The load report shows how much of it is used.
-char leafMemory[8192];
+char leafMemory[LEAF_POOL_BYTES];
 
 // Noise for the drums: tNoise calls this every sample, so it must be cheap.
 // xorshift32 (Marsaglia), scaled to 0..1.
@@ -237,7 +249,7 @@ const FmPatch *patchForProgram(uint8_t program) {
 // Envelopes run at a control rate, once every CONTROL_FRAMES samples, and
 // each sample steps linearly towards the next control value.  On the C3 a
 // tADSRS_tick costs about 700 cycles, a fifth of an FM voice; an addition
-// per sample costs about 110.  The control period (0.67 ms on the C3, 0.25
+// per sample costs about 110.  The control period (0.67 ms on the C3, 0.17
 // ms on the ESP32) still resolves the fastest attacks of the patches (1 ms).
 constexpr uint32_t CONTROL_FRAMES = 8;
 static_assert(BLOCK_FRAMES % CONTROL_FRAMES == 0, "blocks hold whole control periods");
@@ -614,10 +626,61 @@ void runSong() {
 // ---------------------------------------------------------------------------
 // Rendering
 
-// Output gain: a single full-velocity voice peaks at 45 % of full scale.
-// Dense passages can sum past full scale; those samples are clipped and
-// counted in the load report.
-constexpr float OUTPUT_GAIN = 0.45f;
+// Output gain, the master volume: a single full-velocity voice peaks at 25 %
+// of full scale.  The Black Pill uses 0.45, but with the MAX98357A at 9 dB
+// gain and 5 V that overdrives small speakers; 0.25 is 5 dB quieter.  Dense
+// passages can sum past full scale; those samples are clipped and counted
+// in the load report.
+constexpr float OUTPUT_GAIN = 0.25f;
+
+// The output high-pass keeps what a small speaker cannot reproduce (the
+// kick's 48 Hz body, the lowest bass notes) from flapping its cone.  It is
+// the last stage, after the reverb.
+constexpr float OUTPUT_HIGHPASS_HZ = 120;
+#if OUTPUT_HIGHPASS_BIQUAD
+tBiQuad outputHighpass;
+#else
+tHighpass outputHighpass;
+#endif
+
+#if HAS_REVERB
+// LEAF's tNReverb (STK's NRev: 6 combs, then 8 allpasses), fed the dry mix.
+// With its mix at 1 it returns only the reverberation (its mix parameter
+// scales only the dry signal), which is added at REVERB_LEVEL.  Its delay
+// lengths are fixed in samples (tuned for 44.1 kHz) and each line reserves
+// twice its length, about 99 KB in all, so it gets a pool of its own.  The
+// pool comes from the heap: as a static array it overflows the ESP32's
+// static DRAM segment.
+constexpr float REVERB_T60_S = 1.5f;  // decay time to -60 dB
+constexpr float REVERB_LEVEL = 0.2f;
+constexpr size_t REVERB_POOL_BYTES = 102400;
+char *reverbMemory = nullptr;
+tMempool reverbPool;
+tNReverb reverb;
+#endif
+
+void initOutput() {
+#if OUTPUT_HIGHPASS_BIQUAD
+  tBiQuad_init(&outputHighpass, &leaf);
+  setHighPass(outputHighpass, OUTPUT_HIGHPASS_HZ, 0.707f);  // Butterworth
+#else
+  tHighpass_init(&outputHighpass, OUTPUT_HIGHPASS_HZ, &leaf);
+#endif
+#if HAS_REVERB
+  reverbMemory = static_cast<char *>(malloc(REVERB_POOL_BYTES));
+  if (!reverbMemory) {
+    Serial.print("No memory for the reverb; largest free block: ");
+    Serial.println(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    while (true) {
+      delay(1000);
+    }
+  }
+  tMempool_init(&reverbPool, reverbMemory, REVERB_POOL_BYTES, &leaf);
+  tNReverb_initToPool(&reverb, REVERB_T60_S, &reverbPool);
+  tNReverb_setMix(reverb, 1.0f);
+#endif
+}
+
 uint32_t clippedSamples = 0;
 uint8_t peakVoicesInUse = 0;
 
@@ -647,6 +710,15 @@ void renderBlock(int16_t *out) {
     float mix = 0;
     for (uint8_t k = 0; k < activeCount; ++k) mix += active[k]->tick();
     for (uint8_t k = 0; k < drumCount; ++k) mix += activeDrums[k]->tick();
+#if HAS_REVERB
+    // Runs even with every voice silent, so the tail rings out.
+    mix += REVERB_LEVEL * tNReverb_tick(reverb, mix);
+#endif
+#if OUTPUT_HIGHPASS_BIQUAD
+    mix = tBiQuad_tick(outputHighpass, mix);
+#else
+    mix = tHighpass_tick(outputHighpass, mix);
+#endif
     float scaled = mix * SCALE;
     if (scaled > 32767.0f || scaled < -32767.0f) {
       scaled = scaled > 0 ? 32767.0f : -32767.0f;
@@ -679,7 +751,7 @@ void report() {
   }
   if (songFinished) {
     songFinished = false;
-    Serial.print("Song finished, !!!");
+    Serial.print("Song finished,");
     Serial.print(stolenVoices);
     Serial.print(" notes stolen; press BOOT (GPIO");
     Serial.print(KEY_PIN);
@@ -721,6 +793,12 @@ void report() {
   Serial.print(leaf_pool_get_used(&leaf));
   Serial.print(" of ");
   Serial.print(sizeof(leafMemory));
+#if HAS_REVERB
+  Serial.print("; reverb pool: ");
+  Serial.print(mpool_get_used(reverbPool));
+  Serial.print(" of ");
+  Serial.print(REVERB_POOL_BYTES);
+#endif
   Serial.println(" bytes");
   peakVoicesInUse = 0;
   clippedSamples = 0;
@@ -739,6 +817,7 @@ void setup() {
   for (DrumVoice &d : drums) {
     d.init();
   }
+  initOutput();
 
   i2s.setPins(I2S_BCLK, I2S_LRC, I2S_DIN);
   if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
